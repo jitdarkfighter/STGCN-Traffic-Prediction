@@ -13,8 +13,9 @@ from src.stgcn import STGCN
 from src.dataloader import STGCNDataset
 
 
-num_timesteps_input = 20
-num_timesteps_output = 5
+NUM_TIMESTEPS_INPUT = 40
+NUM_TIMESTEPS_OUTPUT = 5
+NUM_NODES = 8
 
 epochs = 150
 batch_size = 50
@@ -39,12 +40,18 @@ def get_normalized_adj(A):
     return A_wave
 
 
-def load_small_4_data():
+def load_small_data(num_nodes=4):
     """
     Load the small 4 intersection data and return normalized values.
     """
-    v_dataset = pd.read_csv("dataset/V_small_4.csv", header=None)
-    w_dataset = pd.read_csv("dataset/W_small_4.csv", header=None)
+
+    # If data is not there in datasets folder, please generate it using smol_dataset.py
+    if not os.path.exists(f"dataset/V_small_{num_nodes}.csv") or not os.path.exists(f"dataset/W_small_{num_nodes}.csv"):
+        print(f"Small dataset for {num_nodes} nodes not found.")
+        return None
+
+    v_dataset = pd.read_csv(f"dataset/V_small_{num_nodes}.csv", header=None)
+    w_dataset = pd.read_csv(f"dataset/W_small_{num_nodes}.csv", header=None)
     
     data_np = v_dataset.values  # [time_steps, num_nodes]
     adj_np = w_dataset.values   # [num_nodes, num_nodes]
@@ -127,11 +134,11 @@ if __name__ == '__main__':
     torch.manual_seed(7)
 
     # Load the small 4 intersection data
-    A, X, means, stds = load_small_4_data()
+    A, X, means, stds = load_small_data(NUM_NODES)
 
     # Create dataset using the dataloader
     data_np = X.T  # Convert back to [time_steps, num_nodes] for dataset
-    stgcn_dataset = STGCNDataset(data_np, num_timesteps_input, num_timesteps_output)
+    stgcn_dataset = STGCNDataset(data_np, NUM_TIMESTEPS_INPUT, NUM_TIMESTEPS_OUTPUT)
     
     # Split data into train/val/test (60%/20%/20%)
     total_samples = len(stgcn_dataset)
@@ -162,8 +169,8 @@ if __name__ == '__main__':
     # Initialize model
     net = STGCN(A_wave.shape[0],
                 training_input.shape[3],  # num_features
-                num_timesteps_input,
-                num_timesteps_output).to(device=device)
+                NUM_TIMESTEPS_INPUT,
+                NUM_TIMESTEPS_OUTPUT).to(device=device)
 
     optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
     loss_criterion = nn.MSELoss()

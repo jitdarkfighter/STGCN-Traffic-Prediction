@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class TGRN(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, dropout_rate=0.3):
+    def __init__(self, in_channels, out_channels, kernel_size, dropout_rate=0.1):
         super(TGRN, self).__init__()
         # kernel_size -> Size of 1D temporal kernel
         padding = (kernel_size - 1) // 2  # Same padding to maintain time dimension
