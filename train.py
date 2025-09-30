@@ -1,5 +1,4 @@
 import os
-import argparse
 import pickle as pk
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,6 +15,8 @@ from src.dataloader import STGCNDataset
 NUM_TIMESTEPS_INPUT = 40
 NUM_TIMESTEPS_OUTPUT = 5
 NUM_NODES = 8
+SEED = 7
+LEARNING_RATE = 1e-3
 
 epochs = 150
 batch_size = 50
@@ -29,15 +30,15 @@ else:
 
 def get_normalized_adj(A):
     """
-    Returns the degree normalized adjacency matrix.
+    Returns the D^-0.5 * (A+I) * D^-0.5
     """
     A = A + np.diag(np.ones(A.shape[0], dtype=np.float32))
     D = np.array(np.sum(A, axis=1)).reshape((-1,))
     D[D <= 10e-5] = 10e-5    # Prevent infs
     diag = np.reciprocal(np.sqrt(D))
-    A_wave = np.multiply(np.multiply(diag.reshape((-1, 1)), A),
+    A_hat = np.multiply(np.multiply(diag.reshape((-1, 1)), A),
                          diag.reshape((1, -1)))
-    return A_wave
+    return A_hat
 
 
 def load_small_data(num_nodes=4):
@@ -55,9 +56,10 @@ def load_small_data(num_nodes=4):
     
     data_np = v_dataset.values  # [time_steps, num_nodes]
     adj_np = w_dataset.values   # [num_nodes, num_nodes]
-    
+
+    print("DATASET INFO:")
     print(f"Data shape: {data_np.shape}")
-    print(f"Adjacency matrix shape: {adj_np.shape}")
+    print(f"Adjacency matrix shape: {adj_np.shape}\n")
     
     # Ensure adjacency matrix is square
     if adj_np.shape[0] != adj_np.shape[1]:
@@ -101,20 +103,11 @@ def generate_dataset_from_loader(data_loader, device):
 
 
 def train_epoch(training_input, training_target, batch_size):
-    """
-    Trains one epoch with the given data.
-    :param training_input: Training inputs of shape (num_samples, num_nodes,
-    num_timesteps_train, num_features).
-    :param training_target: Training targets of shape (num_samples, num_nodes,
-    num_timesteps_predict).
-    :param batch_size: Batch size to use during training.
-    :return: Average loss for this epoch.
-    """
     permutation = torch.randperm(training_input.shape[0])
 
     epoch_training_losses = []
     for i in range(0, training_input.shape[0], batch_size):
-        net.train()
+        model.train()
         optimizer.zero_grad()
 
         indices = permutation[i:i + batch_size]
@@ -122,16 +115,18 @@ def train_epoch(training_input, training_target, batch_size):
         X_batch = X_batch.to(device=device)
         y_batch = y_batch.to(device=device)
 
-        out = net(A_wave, X_batch)
+        out = model(A_hat, X_batch)
         loss = loss_criterion(out, y_batch)
         loss.backward()
         optimizer.step()
         epoch_training_losses.append(loss.detach().cpu().numpy())
+
+    # Return average loss for the epoch
     return sum(epoch_training_losses)/len(epoch_training_losses)
 
 
 if __name__ == '__main__':
-    torch.manual_seed(7)
+    torch.manual_seed(SEED)
 
     # Load the small 4 intersection data
     A, X, means, stds = load_small_data(NUM_NODES)
@@ -162,17 +157,17 @@ if __name__ == '__main__':
     test_input, test_target = generate_dataset_from_loader(test_loader, device)
 
     # Normalize adjacency matrix
-    A_wave = get_normalized_adj(A)
-    A_wave = torch.from_numpy(A_wave).float()
-    A_wave = A_wave.to(device=device)
+    A_hat = get_normalized_adj(A)
+    A_hat = torch.from_numpy(A_hat).float()
+    A_hat = A_hat.to(device=device)
 
     # Initialize model
-    net = STGCN(A_wave.shape[0],
+    model = STGCN(A_hat.shape[0],
                 training_input.shape[3],  # num_features
                 NUM_TIMESTEPS_INPUT,
                 NUM_TIMESTEPS_OUTPUT).to(device=device)
 
-    optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     loss_criterion = nn.MSELoss()
 
     training_losses = []
@@ -181,7 +176,7 @@ if __name__ == '__main__':
     
     print(f"Training on {training_input.shape[0]} samples")
     print(f"Validation on {val_input.shape[0]} samples")
-    print(f"Model parameters: {sum(p.numel() for p in net.parameters())}")
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
     
     for epoch in range(epochs):
         loss = train_epoch(training_input, training_target,
@@ -190,13 +185,13 @@ if __name__ == '__main__':
 
         # Run validation
         with torch.no_grad():
-            net.eval()
+            model.eval()
             val_input = val_input.to(device=device)
             val_target = val_target.to(device=device)
 
-            out = net(A_wave, val_input)
-            val_loss = loss_criterion(out, val_target).to(device="cpu")
-            validation_losses.append(val_loss.detach().numpy().item())
+            out = model(A_hat, val_input)
+            val_loss = loss_criterion(out, val_target).to(device)
+            validation_losses.append(val_loss.detach().cpu().numpy().item())
 
             out_unnormalized = out.detach().cpu().numpy()*stds.T+means.T
             target_unnormalized = val_target.detach().cpu().numpy()*stds.T+means.T
@@ -204,8 +199,8 @@ if __name__ == '__main__':
             validation_maes.append(mae)
 
             out = None
-            val_input = val_input.to(device="cpu")
-            val_target = val_target.to(device="cpu")
+            val_input = val_input.to(device)
+            val_target = val_target.to(device)
 
         print("Training loss: {}".format(training_losses[-1]))
         print("Validation loss: {}".format(validation_losses[-1]))
@@ -232,5 +227,5 @@ if __name__ == '__main__':
             pk.dump((training_losses, validation_losses, validation_maes), fd)
     
     # Save final model
-    torch.save(net.state_dict(), "checkpoints/stgcn_model.pth")
+    torch.save(model.state_dict(), "checkpoints/stgcn_model.pth")
     print("Training completed! Model saved to checkpoints/stgcn_model.pth")

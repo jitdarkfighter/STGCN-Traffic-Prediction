@@ -10,7 +10,7 @@ print(f"Traffic data (V): {v_dataset.shape}")
 print(f"Adjacency matrix (W): {w_dataset.shape}")
 print()
 
-num_nodes = 8
+num_nodes = 16
 
 small_traffic = v_dataset.iloc[:, :num_nodes].copy()
 
